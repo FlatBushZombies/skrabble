@@ -1,8 +1,20 @@
 from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field, root_validator
-from temporalio.client import WorkflowNotFoundError
+from pydantic import BaseModel, Field, model_validator
+
+try:  # Temporal SDK 1.19 and earlier
+    from temporalio.client import WorkflowNotFoundError  # type: ignore[attr-defined]
+except ImportError:  # pragma: no cover - compatibility for newer SDK versions
+    class WorkflowNotFoundError(Exception):
+        """Fallback definition used when Temporal SDK no longer exposes WorkflowNotFoundError.
+
+        The API layer relies on this type solely for distinguishing 404 vs 502
+        when querying workflow status; actual Temporal errors are translated in
+        the temporal_client helpers.
+        """
+
+        pass
 
 from ..services.temporal_client import get_task_status, start_browser_task
 
@@ -21,16 +33,17 @@ class Step(BaseModel):
     text: Optional[str] = Field(None, description="Text to type for 'type' actions")
     path: Optional[str] = Field(None, description="Optional screenshot path override for 'screenshot' actions")
 
-    @root_validator
-    def validate_required_fields(cls, values: Dict[str, Any]) -> Dict[str, Any]:  # type: ignore[override]
-        action = values.get("action")
-        if action == "goto" and not values.get("url"):
+    @model_validator(mode='before')
+    @classmethod
+    def validate_required_fields(cls, data: Any) -> Any:
+        action = data.get("action")
+        if action == "goto" and not data.get("url"):
             raise ValueError("'url' is required for 'goto' action")
-        if action in {"click", "type"} and not values.get("selector"):
+        if action in {"click", "type"} and not data.get("selector"):
             raise ValueError("'selector' is required for 'click' and 'type' actions")
-        if action == "type" and values.get("text") is None:
+        if action == "type" and data.get("text") is None:
             raise ValueError("'text' is required for 'type' action")
-        return values
+        return data
 
 
 class TaskRequest(BaseModel):
